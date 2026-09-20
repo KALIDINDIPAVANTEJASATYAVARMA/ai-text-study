@@ -34,6 +34,13 @@
   .conf button{flex:1;padding:10px;border:1.5px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;font-weight:600}
   .conf button.sel{border-color:var(--navy);background:#eef2f8;color:var(--navy)}
   .conf-ends{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:4px}
+  .cats{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+  .cat{display:flex;align-items:center;gap:9px;padding:9px 11px;border:1.5px solid var(--line);
+       border-radius:8px;cursor:pointer;font-size:14px;background:#fff;user-select:none}
+  .cat.sel{border-color:var(--navy);background:#eef2f8}
+  .cat .box{width:16px;height:16px;border:1.6px solid #9aa0a6;border-radius:4px;flex:0 0 auto;
+       display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff}
+  .cat.sel .box{background:var(--navy);border-color:var(--navy)}
   textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit;margin-top:6px;resize:vertical}
   label.blk{display:block;margin:10px 0 4px;font-weight:600}
   select,input[type=text],input[type=email]{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font:inherit}
@@ -57,15 +64,30 @@
    CONFIG
    ========================================================================= */
 const CONFIG = {
-  endpoint: "",                        // Apps Script Web App URL ("" = download-only)
+  endpoint: "https://script.google.com/macros/s/AKfycbx98kaGqq5OiY3B7y69qA6Ti-3ghbf7akxrg5yeabxn30n-ELtkgLmA-x-TbIEmrsbNXg/exec",                        // Apps Script Web App URL ("" = download-only)
   itemsUrl: "items.json",              // label-free items (built by build_items.py)
   itemsPerCellPerBlock: 5,             // 5 x 4 cells = 20 per block
   minCurriculumSeconds: 60,
   curriculumPdfUrl: "curriculum.pdf",
   collectReason: true,
   collectHighlight: true,
+  collectCategories: true,             // structured cue-tagging checkboxes
+  categoriesPhase: "post",             // "post" (default), "pre", or "both"
   storageKey: "aitext_study_v3"
 };
+
+// The five taught cue families (must match the curriculum sections).
+const CATEGORIES = [
+  { key:"vocab",      label:"Words & phrases used by AI" },
+  { key:"rhythm",     label:"Rhythm & sentence structure" },
+  { key:"substance",  label:"Substance (vague / hollow content)" },
+  { key:"tone",       label:"Tone & voice" },
+  { key:"formatting", label:"Formatting clues" }
+];
+function categoriesOnThisPhase(){
+  return CONFIG.collectCategories &&
+    (CONFIG.categoriesPhase==="both" || CONFIG.categoriesPhase===STATE.phase);
+}
 
 /* =========================================================================
    Helpers.  ITEMS is loaded from items.json at startup: { A:[...], B:[...] }
@@ -233,8 +255,10 @@ function renderQuestion(){
       <div class="q">How confident are you?</div>
       <div class="conf" id="conf">${[1,2,3,4,5].map(n=>`<button data-c="${n}">${n}</button>`).join('')}</div>
       <div class="conf-ends"><span>1 = just guessing</span><span>5 = very sure</span></div>
-      ${CONFIG.collectReason?`<label class="blk" style="margin-top:14px">Why? (optional)</label>
-        <textarea id="reason" rows="2" placeholder="e.g. repeated fancy words, no real detail…"></textarea>`:''}
+      ${categoriesOnThisPhase()?`<label class="blk" style="margin-top:14px">Which of these helped you decide? (optional, choose any)</label>
+        <div class="cats" id="cats">${CATEGORIES.map(c=>`<div class="cat" data-k="${c.key}"><span class="box">&#10003;</span><span>${c.label}</span></div>`).join('')}</div>`:''}
+      ${CONFIG.collectReason?`<label class="blk" style="margin-top:14px">Anything else? (optional)</label>
+        <textarea id="reason" rows="2" placeholder="e.g. a specific word or detail that gave it away…"></textarea>`:''}
       <div class="err hidden" id="err">Please choose Human/AI and a confidence level.</div>
       <button class="btn" id="next" disabled>${STATE.idx+1===total?'Finish this set':'Next'}</button>
     </div>`;
@@ -246,6 +270,14 @@ function renderQuestion(){
     app.querySelectorAll('.sent').forEach(sp=>{
       sp.onclick=()=>{ const i=sp.dataset.i, st=((hl[i]||0)+1)%3; if(st===0) delete hl[i]; else hl[i]=st;
         sp.classList.toggle('ai', st===1); sp.classList.toggle('hu', st===2); };
+    });
+  }
+
+  const cats=new Set();
+  if(categoriesOnThisPhase()){
+    app.querySelectorAll('.cat').forEach(el=>{
+      el.onclick=()=>{ const k=el.dataset.k; if(cats.has(k)){cats.delete(k);el.classList.remove('sel');}
+        else{cats.add(k);el.classList.add('sel');} };
     });
   }
   let ans=null, conf=null;
@@ -263,6 +295,7 @@ function renderQuestion(){
     STATE.responses.push({
       phase:STATE.phase, token:item.token, presentation_order:item.presentation_order,
       response:ans, confidence:conf,
+      categories: Array.from(cats),
       reason: CONFIG.collectReason ? (document.getElementById('reason').value||'') : '',
       highlights: Object.keys(hl).map(i=>({sentence_index:+i, mark: hl[i]===1?'ai':'human'})),
       time_ms: Math.round(performance.now()-qStart)
