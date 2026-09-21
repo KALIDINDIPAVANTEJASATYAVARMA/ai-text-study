@@ -73,6 +73,7 @@ const CONFIG = {
   collectHighlight: true,
   collectCategories: true,             // structured cue-tagging checkboxes
   categoriesPhase: "post",             // "post" (default), "pre", or "both"
+  logFocusLoss: true,                  // count when a participant leaves the test tab
   storageKey: "aitext_study_v3"
 };
 
@@ -96,6 +97,15 @@ function categoriesOnThisPhase(){
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
 let ITEMS = null;
+let awayQ = 0;              // times the tab was hidden during the CURRENT question
+let focusListenerAttached = false;
+function attachFocusLogger(){
+  if(focusListenerAttached || !CONFIG.logFocusLoss) return;
+  focusListenerAttached = true;
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.hidden){ awayQ++; if(STATE){ STATE.awayTotal=(STATE.awayTotal||0)+1; save(); } }
+  });
+}
 
 function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
 function sampleN(a,n){ return shuffle(a).slice(0,n); }
@@ -166,7 +176,7 @@ function screenWelcome(existing){
   app.innerHTML = `
     <h1>Can people spot AI-written text?</h1>
     <p class="sub">A short research activity: a set of questions, a brief guide to read,
-       then another set of questions. Roughly 30–45 minutes.</p>
+       then another set of questions. Roughly 60 minutes.</p>
     <div class="card">
       <h2>Welcome back</h2>
       <p>We found a session in progress on this device
@@ -187,7 +197,7 @@ function screenIntake(){
   app.innerHTML = `
     <h1>Can people spot AI-written text?</h1>
     <p class="sub">A short research activity: a set of questions, a brief guide to read,
-       then another set of questions. Roughly 30–45 minutes.</p>
+       then another set of questions. Roughly 60 minutes.</p>
     <div class="card">
       <p>Your anonymous ID: <span class="pid">${STATE.pid}</span></p>
       <label class="blk">Name</label>
@@ -202,13 +212,13 @@ function screenIntake(){
         <option>A few times a month</option><option>Rarely</option><option>Never</option>
       </select>
       <label class="blk" style="margin-top:14px">
-        <input type="checkbox" id="consent"> I agree to take part and to my anonymous responses being used
+        <input type="checkbox" id="consent"> I agree to take part and to my responses being used
         for this research.
       </label>
       <div class="err hidden" id="err">Please fill name, a valid email, the usage question, and tick consent.</div>
       <button class="btn" id="go" disabled>Start</button>
-      <div class="privacy">Your name and email are stored separately from your answers and linked only by the
-        anonymous ID above. They are used solely to arrange the follow-up test and are not shared.</div>
+      <div class="privacy">Your name and email are used solely to arrange the follow-up test and are not shared.
+        For data quality, we also record when you switch away from the test tab during the questions.</div>
     </div>`;
   const name=document.getElementById('name'), email=document.getElementById('email'),
         usage=document.getElementById('usage'), consent=document.getElementById('consent'),
@@ -264,6 +274,7 @@ function renderQuestion(){
     </div>`;
   setProgress(Math.round(STATE.idx/total*100));
   const qStart = performance.now();
+  awayQ = 0;   // reset per-question tab-away counter
 
   const hl={};
   if(CONFIG.collectHighlight){
@@ -298,6 +309,7 @@ function renderQuestion(){
       categories: Array.from(cats),
       reason: CONFIG.collectReason ? (document.getElementById('reason').value||'') : '',
       highlights: Object.keys(hl).map(i=>({sentence_index:+i, mark: hl[i]===1?'ai':'human'})),
+      away_count: awayQ,
       time_ms: Math.round(performance.now()-qStart)
     });
     STATE.idx++; save();
@@ -333,6 +345,7 @@ function buildPayload(){
     ai_usage:STATE.ai_usage, consent:STATE.consent,
     curriculum_time_ms:STATE.curriculumMs, user_agent:navigator.userAgent,
     started_at:STATE.startedAt, submitted_at:new Date().toISOString(),
+    focus_loss_total:STATE.awayTotal||0,
     responses:STATE.responses
   };
 }
@@ -355,7 +368,7 @@ async function submitAll(){
 }
 function screenDone(ok,payload){
   const msg = ok ? "Your responses were submitted successfully. We'll email you about the follow-up test in two weeks."
-                 : "Your responses are saved locally. Please download the file and send it to the researcher.";
+                 : "Your responses are saved locally. Please download the file and email it to pavantejasa1@iisc.ac.in";
   app.innerHTML=`
     <div class="card">
       <h2>Thank you!</h2>
@@ -380,6 +393,7 @@ function route(){
   }
 }
 async function init(){
+  attachFocusLogger();
   const saved = loadSaved();
   if(saved && saved.phase && saved.phase!=='done'){ screenWelcome(saved); return; }  // resume needs no items
   try{ ITEMS = await loadItems(); }
